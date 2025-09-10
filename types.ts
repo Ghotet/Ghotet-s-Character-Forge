@@ -30,3 +30,10 @@ export interface CharacterData {
   images: CharacterImages | null;
   prompt: string;
 }
+
+export interface Settings {
+    imageEndpoint: string;
+    llmEndpoint: string;
+    useLocalImage: boolean;
+    useLocalLlm: boolean;
+}

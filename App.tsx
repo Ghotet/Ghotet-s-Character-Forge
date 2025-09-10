@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import type { AppState, CharacterData, CharacterMode } from './types';
+import type { AppState, CharacterData, CharacterMode, Settings } from './types';
 import { Header } from './components/Header';
 import { ModeSelector } from './components/ModeSelector';
 import { GeneratorForm } from './components/GeneratorForm';
@@ -8,6 +8,7 @@ import { Loader } from './components/Loader';
 import { ErrorDisplay } from './components/ErrorDisplay';
 import { ImageGrid } from './components/ImageGrid';
 import { CharacterSheet } from './components/CharacterSheet';
+import { SettingsPage } from './components/Settings';
 import {
   generateConceptImages,
   generateCharacterDetailsFromPrompt,
@@ -28,10 +29,29 @@ const App: React.FC = () => {
   const [conceptImages, setConceptImages] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [showApp, setShowApp] = useState<boolean>(false);
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [settings, setSettings] = useState<Settings>({
+    imageEndpoint: 'http://127.0.0.1:7860',
+    llmEndpoint: 'http://127.0.0.1:1234',
+    useLocalImage: false,
+    useLocalLlm: false,
+  });
 
   useEffect(() => {
+    try {
+        const savedSettings = localStorage.getItem('ghotetForgeSettings');
+        if (savedSettings) {
+            setSettings(JSON.parse(savedSettings));
+        }
+    } catch (error) {
+        console.error("Failed to parse settings from localStorage", error);
+    }
     setShowApp(true);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('ghotetForgeSettings', JSON.stringify(settings));
+  }, [settings]);
 
   const handleError = (message: string) => {
     setErrorMessage(message);
@@ -42,21 +62,22 @@ const App: React.FC = () => {
     setAppState('generatingConcepts');
     setCharacterData({ details: null, images: null, prompt });
     try {
-      const images = await generateConceptImages(prompt);
+      const images = await generateConceptImages(prompt, settings);
       setConceptImages(images);
       setAppState('selectingConcept');
     } catch (error) {
       console.error(error);
-      handleError('Failed to generate concept images. The forge is cold.');
+      const errorMsg = error instanceof Error ? error.message : 'Failed to generate concept images. The forge is cold.';
+      handleError(errorMsg);
     }
-  }, []);
+  }, [settings]);
 
   const generateFullCharacter = useCallback(async (prompt: string, image: string) => {
     setAppState('generatingDetails');
     try {
       const [details, visuals] = await Promise.all([
-        generateCharacterDetailsFromPrompt(prompt, image),
-        generateOrthosAndPoses(image, prompt),
+        generateCharacterDetailsFromPrompt(prompt, image, settings),
+        generateOrthosAndPoses(image, prompt, settings),
       ]);
       setCharacterData({
         prompt,
@@ -69,9 +90,10 @@ const App: React.FC = () => {
       setAppState('displayingCharacter');
     } catch (error) {
       console.error(error);
-      handleError('Failed to forge character details. The spirits are unwilling.');
+      const errorMsg = error instanceof Error ? error.message : 'Failed to forge character details. The spirits are unwilling.';
+      handleError(errorMsg);
     }
-  }, []);
+  }, [settings]);
 
   const handleSelectConcept = useCallback(
     async (image: string) => {
@@ -86,8 +108,8 @@ const App: React.FC = () => {
       try {
         const base64Image = await fileToBase64(file);
         const [details, visuals] = await Promise.all([
-            generateCharacterDetailsFromImage(base64Image),
-            generateOrthosAndPoses(base64Image, 'the character in the image'),
+            generateCharacterDetailsFromImage(base64Image, settings),
+            generateOrthosAndPoses(base64Image, 'the character in the image', settings),
         ]);
 
         setCharacterData({
@@ -101,10 +123,11 @@ const App: React.FC = () => {
         setAppState('displayingCharacter');
       } catch (error) {
         console.error(error);
-        handleError('Failed to analyze the uploaded image. Is it cursed?');
+        const errorMsg = error instanceof Error ? error.message : 'Failed to analyze the uploaded image. Is it cursed?';
+        handleError(errorMsg);
       }
     },
-    []
+    [settings]
   );
   
   const handleEditName = (name: string) => {
@@ -119,22 +142,26 @@ const App: React.FC = () => {
     if (!characterData.details) return;
     const description = characterData.prompt || 'this character'; 
     try {
-      const newName = await generateCharacterName(description);
+      const newName = await generateCharacterName(description, settings);
       handleEditName(newName);
     } catch (error) {
         console.error("Failed to generate a new name:", error);
         // Silently fail, do not trigger full screen error for this non-critical action
     }
-  }, [characterData.prompt, characterData.details]);
+  }, [characterData.prompt, characterData.details, settings]);
 
   const handleReset = () => {
     setAppState('idle');
     setCharacterData({ details: null, images: null, prompt: '' });
     setConceptImages([]);
     setErrorMessage('');
+    setShowSettings(false);
   };
 
   const renderContent = () => {
+    if (showSettings) {
+        return <SettingsPage settings={settings} onSettingsChange={setSettings} onClose={() => setShowSettings(false)} />;
+    }
     switch (appState) {
       case 'generatingConcepts':
       case 'generatingDetails':
@@ -172,7 +199,7 @@ const App: React.FC = () => {
   return (
     <div className={`bg-black min-h-screen font-sans text-gray-300 transition-opacity duration-1000 ${showApp ? 'opacity-100' : 'opacity-0'}`}>
       <div className="container mx-auto px-4 py-8">
-        <Header onReset={handleReset} showReset={appState !== 'idle'}/>
+        <Header onReset={handleReset} showReset={appState !== 'idle'} onToggleSettings={() => setShowSettings(s => !s)} />
         <main className="mt-8">{renderContent()}</main>
       </div>
     </div>
