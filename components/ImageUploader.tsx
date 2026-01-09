@@ -3,7 +3,9 @@ import React, { useState, useCallback } from 'react';
 import { Button } from './Button';
 
 interface ImageUploaderProps {
-  onUpload: (file: File) => void;
+  onUpload: (file: File, instructions?: string) => void;
+  title?: string;
+  description?: string;
 }
 
 const UploadIcon: React.FC = () => (
@@ -12,9 +14,13 @@ const UploadIcon: React.FC = () => (
     </svg>
 );
 
-
-export const ImageUploader: React.FC<ImageUploaderProps> = ({ onUpload }) => {
+export const ImageUploader: React.FC<ImageUploaderProps> = ({ 
+  onUpload, 
+  title = "Reforge Image", 
+  description = "Upload a character drawing, portrait, or even a rough sketch to bring it to life in the Forge." 
+}) => {
   const [file, setFile] = useState<File | null>(null);
+  const [instructions, setInstructions] = useState('');
   const [isDragging, setIsDragging] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -49,14 +55,21 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({ onUpload }) => {
 
   const handleSubmit = () => {
     if (file) {
-      onUpload(file);
+      onUpload(file, instructions.trim() || undefined);
     }
   };
 
+  const isPackage = file?.name.endsWith('.json') || file?.name.endsWith('.zip');
+
   return (
     <div className="bg-gray-900/50 p-6 rounded-b-lg border-x border-b border-gray-800">
+      <h3 className="text-center text-green-400 font-bold uppercase tracking-widest text-sm mb-2">{title}</h3>
+      <p className="text-xs text-gray-400 mb-4 text-center">
+        {description}
+      </p>
+      
       <div 
-        className={`group flex justify-center items-center flex-col w-full h-48 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${isDragging ? 'border-green-500 bg-green-900/20' : 'border-gray-700 hover:border-green-600'}`}
+        className={`group flex justify-center items-center flex-col w-full h-48 border-2 border-dashed rounded-lg cursor-pointer transition-all ${isDragging ? 'border-green-500 bg-green-900/20' : 'border-gray-700 hover:border-green-600'}`}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragEnter={handleDragEnter}
@@ -64,18 +77,39 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({ onUpload }) => {
         onClick={() => document.getElementById('file-upload')?.click()}
       >
         <UploadIcon />
-        <p className="mb-2 text-sm text-gray-500 group-hover:text-green-400"><span className="font-semibold">Click to upload</span> or drag and drop</p>
-        <p className="text-xs text-gray-600 group-hover:text-green-500">PNG, JPG, or WEBP</p>
-        <input id="file-upload" type="file" className="hidden" accept="image/png, image/jpeg, image/webp" onChange={handleFileChange} />
+        <p className="mb-2 text-sm text-gray-500 group-hover:text-green-400"><span className="font-semibold">Drop image or Forge Bundle (.zip)</span></p>
+        <p className="text-[10px] text-gray-600 uppercase tracking-tighter">PNG, JPG, JSON or ZIP</p>
+        <input id="file-upload" type="file" className="hidden" accept="image/png, image/jpeg, image/webp, application/json, application/zip" onChange={handleFileChange} />
       </div>
+
       {file && (
-        <div className="mt-4 text-center text-green-400">
-          Selected: {file.name}
+        <div className="mt-6 space-y-4 animate-fadeIn">
+          <div className={`text-center py-2 px-4 rounded border ${isPackage ? 'border-green-500/50 bg-green-500/5 text-green-400' : 'border-gray-800 text-gray-400'}`}>
+            <span className="text-xs font-mono uppercase tracking-widest">{isPackage ? 'Forge Bundle Detected' : 'Biological Scan Initialized'}</span>
+            <div className="font-bold text-sm mt-1">{file.name}</div>
+          </div>
+          
+          {!isPackage && (
+            <div className="max-w-md mx-auto">
+              <label htmlFor="instructions" className="block text-[10px] font-bold text-green-500 uppercase tracking-widest mb-2">
+                Neural Overrides (Optional)
+              </label>
+              <textarea
+                id="instructions"
+                rows={3}
+                className="w-full bg-black border border-gray-700 rounded-md p-3 focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all text-sm font-mono"
+                placeholder="Initial personality directives..."
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+              />
+            </div>
+          )}
         </div>
       )}
-      <div className="mt-4 text-center">
-        <Button onClick={handleSubmit} disabled={!file}>
-          Animate Character
+
+      <div className="mt-6 text-center">
+        <Button onClick={handleSubmit} disabled={!file} className="w-full sm:w-auto px-12">
+          {isPackage ? 'Sync Neural Link' : 'Establish Link'}
         </Button>
       </div>
     </div>

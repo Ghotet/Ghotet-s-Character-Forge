@@ -9,7 +9,7 @@ interface ModeSelectorProps {
 
 export const ModeSelector: React.FC<ModeSelectorProps> = ({ currentMode, onSetMode }) => {
   const getButtonClasses = (mode: CharacterMode) => {
-    const base = 'w-1/2 py-3 text-center font-semibold uppercase tracking-widest text-sm transition-all duration-300 border-b-2';
+    const base = 'w-1/3 py-3 text-center font-semibold uppercase tracking-widest text-[10px] sm:text-xs transition-all duration-300 border-b-2';
     if (currentMode === mode) {
       return `${base} border-green-500 text-green-400 shadow-[0_5px_15px_-5px_rgba(50,255,50,0.4)]`;
     }
@@ -19,10 +19,13 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({ currentMode, onSetMo
   return (
     <div className="flex w-full bg-black/30 rounded-t-lg overflow-hidden border-x border-t border-gray-800">
       <button className={getButtonClasses('generator')} onClick={() => onSetMode('generator')}>
-        Full Generator
+        Forge
       </button>
       <button className={getButtonClasses('uploader')} onClick={() => onSetMode('uploader')}>
-        Bring Your Own Image
+        Reforge
+      </button>
+      <button className={getButtonClasses('interactive')} onClick={() => onSetMode('interactive')}>
+        Interactive
       </button>
     </div>
   );

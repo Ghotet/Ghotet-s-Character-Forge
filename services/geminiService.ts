@@ -1,32 +1,17 @@
+
 import { GoogleGenAI, Type, Modality } from '@google/genai';
-import type { CharacterDetails, Settings } from '../types';
+import type { CharacterDetails, Settings, ChatMessage } from '../types';
 
 const API_KEY = process.env.API_KEY;
-
-if (!API_KEY) {
-  console.error(
-    "API_KEY is not set. Please set the API_KEY environment variable."
-  );
-}
-
-const ai = new GoogleGenAI({ apiKey: API_KEY! });
+const ai = new GoogleGenAI({ apiKey: API_KEY || '' });
 
 const characterDetailsSchema = {
     type: Type.OBJECT,
     properties: {
-        name: {
-            type: Type.STRING,
-            description: "A suitable and thematic name for the character based on their backstory, personality, and appearance."
-        },
-        personality: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: "An array of 3-5 single-word personality traits.",
-        },
-        backstory: {
-            type: Type.STRING,
-            description: "A 2-3 paragraph backstory for the character.",
-        },
+        name: { type: Type.STRING },
+        personality: { type: Type.ARRAY, items: { type: Type.STRING } },
+        backstory: { type: Type.STRING },
+        voicePrompt: { type: Type.STRING, description: "A one sentence description of how the character sounds" },
         quests: {
             type: Type.ARRAY,
             items: {
@@ -35,226 +20,200 @@ const characterDetailsSchema = {
                     title: { type: Type.STRING },
                     description: { type: Type.STRING },
                 }
-            },
-            description: "An array of 3 quest arcs with titles and short descriptions.",
+            }
         },
-    }
+    },
+    required: ["name", "personality", "backstory", "voicePrompt", "quests"]
 };
 
-/**
- * Converts a File object to a base64 encoded string.
- */
-export const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve((reader.result as string).split(',')[1]);
-        reader.onerror = error => reject(error);
-    });
-};
+const FALLBACK_PROMPTS = [
+    "A grizzled space pirate with a cybernetic parrot.",
+    "An elemental spirit of a forgotten, overgrown city.",
+    "A time-traveling detective from a neo-noir future.",
+    "A mischievous rogue who can talk to shadows.",
+    "A solar knight clad in living gold armor.",
+    "A cybernetic monk seeking enlightenment in the code.",
+    "A gothic vampire duelist with a rapier of frozen blood.",
+    "A wasteland scavenger with a mechanical wolf companion."
+];
 
-/**
- * Generates images from a local A1111-compatible endpoint.
- */
-const generateLocalImages = async (prompt: string, endpoint: string, numImages: number): Promise<string[]> => {
-    const response = await fetch(`${endpoint}/sdapi/v1/txt2img`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            prompt: `high-quality, photorealistic fantasy concept art character portrait, ${prompt}`,
-            negative_prompt: "low quality, blurry, cartoon, anime, deformed",
-            steps: 25,
-            cfg_scale: 7,
-            width: 512,
-            height: 512,
-            batch_size: numImages,
-        }),
-    });
-    if (!response.ok) throw new Error(`Local image generation failed: ${response.statusText}`);
-    const data = await response.json();
-    if (!data.images) throw new Error("Local API did not return images.");
-    return data.images;
-};
-
-/**
- * Generates content from a local LM Studio-compatible (OpenAI) endpoint.
- */
-const generateLocalLLMContent = async (endpoint: string, systemPrompt: string, userPrompt: string): Promise<any> => {
-    const response = await fetch(`${endpoint.replace(/\/$/, "")}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: "local-model", // LM Studio doesn't require a specific model name
-            messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: userPrompt }
-            ],
-            temperature: 0.7,
-        }),
-    });
-
-    if (!response.ok) throw new Error(`Local LLM request failed: ${response.statusText}`);
-    const data = await response.json();
-    try {
-        // The local model's response is expected to be a JSON string in the content.
-        const content = data.choices[0].message.content;
-        return JSON.parse(content.trim());
-    } catch (e) {
-        throw new Error("Local LLM did not return valid JSON.");
-    }
-};
-
-/**
- * Generates 3-5 concept images based on a text prompt, routing to local or cloud API.
- */
-export const generateConceptImages = async (prompt: string, settings: Settings): Promise<string[]> => {
-  // Route image generation request based on user settings.
-  if (settings.useLocalImage) {
-    console.log(`Routing image generation to local endpoint: ${settings.imageEndpoint}`);
-    return generateLocalImages(prompt, settings.imageEndpoint, 4);
-  }
-  
-  console.log(`Generating concepts for: ${prompt}`);
-  if (!API_KEY) throw new Error("API_KEY not configured");
-  const response = await ai.models.generateImages({
-    model: 'imagen-4.0-generate-001',
-    prompt: `Generate 4 distinct, high-quality, photorealistic fantasy concept art character portraits based on the following description: "${prompt}". Ensure variety in composition, lighting, and mood.`,
-    config: { numberOfImages: 4, outputMimeType: 'image/png' },
-  });
-  return response.generatedImages.map(img => img.image.imageBytes);
-};
-
-/**
- * Generates character details from a prompt and image, routing to local or cloud API.
- */
-export const generateCharacterDetailsFromPrompt = async (prompt: string, imageBase64: string, settings: Settings): Promise<CharacterDetails> => {
-  // Route LLM request based on user settings.
-  if (settings.useLocalLlm) {
-    console.log(`Routing LLM request to local endpoint: ${settings.llmEndpoint}`);
-    const systemPrompt = `You are a creative assistant. Based on the user's prompt, generate a character profile. Respond with ONLY a valid JSON object matching this schema: ${JSON.stringify(characterDetailsSchema, null, 2)}. Do not include markdown formatting or any other text.`;
-    const userPrompt = `Character Prompt: "${prompt}". Generate the profile.`;
-    return generateLocalLLMContent(settings.llmEndpoint, systemPrompt, userPrompt);
-  }
-  
-  console.log(`Generating details for prompt: ${prompt}`);
-  if (!API_KEY) throw new Error("API_KEY not configured");
-  const imagePart = { inlineData: { data: imageBase64, mimeType: 'image/png' } };
-  const textPart = { text: `Based on this description: "${prompt}" and the provided image, generate a character profile.` };
+export const generateCharacterSpeech = async (text: string, voicePrompt: string): Promise<Uint8Array> => {
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: { parts: [imagePart, textPart] },
-    config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema },
+    model: "gemini-2.5-flash-preview-tts",
+    contents: [{ parts: [{ text: `Say with a ${voicePrompt} voice: ${text}` }] }],
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: 'Kore' },
+        },
+      },
+    },
   });
-  return JSON.parse(response.text.trim());
+
+  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!base64Audio) throw new Error("No audio generated");
+  return decodeBase64(base64Audio);
 };
 
-/**
- * Generates character details from an image, routing to local or cloud API.
- */
-export const generateCharacterDetailsFromImage = async (imageBase64: string, settings: Settings): Promise<CharacterDetails> => {
-  // Route LLM request based on user settings.
-  if (settings.useLocalLlm) {
-    console.log(`Routing LLM request to local endpoint: ${settings.llmEndpoint}`);
-    const systemPrompt = `You are a creative assistant. Based on a character image, generate a character profile. Respond with ONLY a valid JSON object matching this schema: ${JSON.stringify(characterDetailsSchema, null, 2)}. Do not include markdown formatting or any other text.`;
-    const userPrompt = "Analyze the character in the provided image and generate their profile.";
-    return generateLocalLLMContent(settings.llmEndpoint, systemPrompt, userPrompt);
-  }
-  
-  console.log('Generating details from uploaded image.');
-  if (!API_KEY) throw new Error("API_KEY not configured");
-  const imagePart = { inlineData: { data: imageBase64, mimeType: 'image/png' } };
-  const textPart = { text: `Analyze the character in this image. Based on their appearance, attire, and expression, generate a detailed character profile.` };
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: { parts: [imagePart, textPart] },
-    config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema },
-  });
-  return JSON.parse(response.text.trim());
-};
+export const getCharacterChatResponse = async (
+  history: ChatMessage[], 
+  userInput: string, 
+  details: CharacterDetails
+): Promise<{ text: string, emotion: string, resonanceChange?: number }> => {
+  const systemInstruction = `You are ${details.name}. 
+  Personality: ${details.personality.join(', ')}. 
+  Backstory: ${details.backstory}. 
+  Roleplay as this character in a dating-sim style interaction. Keep responses punchy and under 3 sentences.
+  You MUST respond ONLY with a raw JSON object.
+  JSON structure: {"text": "your spoken response", "emotion": "one of: happy, angry, thoughtful, neutral", "resonanceChange": number between -5 and 10 based on how the user's input would affect your relationship}`;
 
-/**
- * Generates a character name, routing to local or cloud API.
- */
-export const generateCharacterName = async (characterDescription: string, settings: Settings): Promise<string> => {
-    // Route LLM request based on user settings.
-    if (settings.useLocalLlm) {
-        console.log(`Routing name generation to local endpoint: ${settings.llmEndpoint}`);
-        const systemPrompt = "You are a name generator. Based on the user's prompt, provide a single, thematic name. Respond with ONLY the name and nothing else.";
-        const userPrompt = `Character description: "${characterDescription}". Generate a name.`;
-        const response = await generateLocalLLMContent(settings.llmEndpoint, systemPrompt, userPrompt);
-        // Assuming the local LLM might return JSON like {"name": "Elara"}, we try to find the name.
-        const name = response.name || response.toString();
-        return name.trim().replace(/["*]/g, '');
-    }
-
-    console.log(`Generating a new name for: ${characterDescription}`);
-    if (!API_KEY) throw new Error("API_KEY not configured");
+  try {
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `Based on the character description "${characterDescription}", generate a single, suitable, thematic name. Return only the name and nothing else.`,
+      model: 'gemini-3-flash-preview',
+      contents: [
+        ...history.map(m => ({ role: m.role, parts: [{ text: m.text }] })),
+        { role: 'user', parts: [{ text: userInput }] }
+      ],
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+      }
     });
-    return response.text.trim().replace(/["*]/g, '');
+
+    const rawText = response.text || "{}";
+    const cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (e) {
+    console.error("Chat parsing error:", e);
+    return { text: "My neural link is flickering...", emotion: "thoughtful", resonanceChange: 0 };
+  }
 };
 
-/**
- * Generates orthos and poses, routing to local or cloud API.
- */
-export const generateOrthosAndPoses = async (imageBase64: string, characterDescription: string, settings: Settings): Promise<{ orthos: { front: string; side: string; back: string; }; poses: string[]; }> => {
-    console.log(`Generating orthos and poses for: ${characterDescription}`);
-    
-    const generateImageView = async (prompt: string, useImg2Img: boolean): Promise<string> => {
-        // Route image generation request based on user settings.
-        if (settings.useLocalImage) {
-            const endpoint = settings.imageEndpoint;
-            const apiPath = useImg2Img ? '/sdapi/v1/img2img' : '/sdapi/v1/txt2img';
-            const payload: any = {
-                prompt: prompt,
-                negative_prompt: "low quality, blurry, cartoon, anime, deformed",
-                steps: 30,
-                cfg_scale: 7,
-                width: 512,
-                height: 512,
-            };
-            if (useImg2Img) {
-                payload.init_images = [imageBase64];
-                payload.denoising_strength = 0.6;
-            }
-            const response = await fetch(`${endpoint}${apiPath}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (!response.ok) throw new Error(`Local image view generation failed: ${response.statusText}`);
-            const data = await response.json();
-            return data.images[0];
-        }
+export const rerollCharacterName = async (details: CharacterDetails): Promise<string> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: `Based on this character profile, generate 1 unique and fitting name. 
+    Personality: ${details.personality.join(', ')}. 
+    Backstory: ${details.backstory}.
+    Return ONLY the name string.`,
+    config: { responseMimeType: 'text/plain' }
+  });
+  return response.text.trim();
+};
 
-        if (!API_KEY) throw new Error("API_KEY not configured");
-        const imagePart = { inlineData: { data: imageBase64, mimeType: 'image/png' } };
-        const textPart = { text: prompt };
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image-preview',
-            contents: { parts: [imagePart, textPart] },
-            config: { responseModalities: [Modality.IMAGE, Modality.TEXT] },
-        });
-        for (const part of response.candidates[0].content.parts) {
-            if (part.inlineData) {
-                return part.inlineData.data;
-            }
-        }
-        throw new Error("API did not return an image.");
+function decodeBase64(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+export async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number = 24000,
+  numChannels: number = 1
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
+
+export const generateConceptImages = async (prompt: string, dimension: any, settings: Settings): Promise<string[]> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: `Full-length standing character concept art. Head-to-toe view. The entire character including legs and shoes must be fully visible and centered in the frame. No cropping. Subject: ${prompt}. Cinematic lighting, white background.`,
+    config: { imageConfig: { aspectRatio: "3:4" } }
+  });
+  return response.candidates?.[0]?.content?.parts
+    ?.filter(p => p.inlineData)
+    ?.map(p => p.inlineData!.data) || [];
+};
+
+export const generateCharacterDetailsFromPrompt = async (prompt: string, imageBase64: string, settings: Settings): Promise<CharacterDetails> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: { parts: [{ inlineData: { data: imageBase64, mimeType: 'image/png' } }, { text: prompt }] },
+    config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema },
+  });
+  return JSON.parse(response.text.trim());
+};
+
+export const generateOrthosAndPoses = async (imageBase64: string, desc: string, settings: Settings) => {
+    const emotionPrompts = [
+      "Head-to-toe full body view, standing neutral, entire body in frame.",
+      "Head-to-toe full body view, laughing joyfully, wide smile, expressive standing pose.",
+      "Head-to-toe full body view, aggressive angry combat pose, snarling expression.",
+      "Head-to-toe full body view, thoughtful contemplative pose, finger to chin."
+    ];
+
+    const poses = await Promise.all(emotionPrompts.map(async (promptText) => {
+      const res = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { 
+          parts: [
+            { inlineData: { data: imageBase64, mimeType: 'image/png' } }, 
+            { text: `Maintain character consistency. ${promptText}. Ensure the entire character fits in the frame from top to bottom.` }
+          ] 
+        },
+        config: { imageConfig: { aspectRatio: "3:4" } }
+      });
+      return res.candidates![0].content.parts.find(p => p.inlineData)!.inlineData!.data;
+    }));
+
+    return { 
+      orthos: { front: imageBase64, side: imageBase64, back: imageBase64 }, 
+      poses 
     };
+};
 
-    const [front, side, back, pose1, pose2] = await Promise.all([
-        generateImageView(`Generate a clean, full-body, orthographic front view of the character for a 3D model sheet. Neutral pose and flat lighting.`, true),
-        generateImageView(`Generate a clean, full-body, orthographic side view (left) of the character for a 3D model sheet. Neutral pose and flat lighting.`, true),
-        generateImageView(`Generate a clean, full-body, orthographic back view of the character for a 3D model sheet. Neutral pose and flat lighting.`, true),
-        generateImageView(`Generate a dynamic action pose of the character, consistent with their description as a "${characterDescription}". Cinematic lighting.`, true),
-        generateImageView(`Generate an expressive character pose of the character, consistent with their description as a "${characterDescription}". Dramatic lighting.`, true),
-    ]);
+export const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.readAsDataURL(file);
+    });
+};
 
-    return {
-        orthos: { front, side, back },
-        poses: [pose1, pose2],
-    };
+export const generateRandomPrompts = async (settings: Settings): Promise<string[]> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: "Generate 4 short character prompts for a fantasy game.",
+      config: { responseMimeType: 'application/json', responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } } },
+    });
+    return JSON.parse(response.text.trim());
+  } catch (e) {
+    // If quota exceeded or error, return local fallback
+    console.warn("Using fallback prompts due to API error:", e);
+    return FALLBACK_PROMPTS.sort(() => 0.5 - Math.random()).slice(0, 4);
+  }
+};
+
+export const generateCharacterDetailsFromImage = async (imageBase64: string, settings: Settings): Promise<CharacterDetails> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: { parts: [{ inlineData: { data: imageBase64, mimeType: 'image/png' } }, { text: "Analyze this character and create a profile in JSON." }] },
+    config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema },
+  });
+  return JSON.parse(response.text.trim());
+};
+
+export const editImageWithInstructions = async (img: string, inst: string, settings: Settings) => {
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [{ inlineData: { data: img, mimeType: 'image/png' } }, { text: inst }] }
+    });
+    return response.candidates![0].content.parts.find(p => p.inlineData)!.inlineData!.data;
 };

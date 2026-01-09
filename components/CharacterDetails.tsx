@@ -1,206 +1,227 @@
+
 import React, { useState, useEffect } from 'react';
 import type { CharacterData } from '../types';
 import { Button } from './Button';
+import { generateCharacterSpeech, decodeAudioData } from '../services/geminiService';
 import JSZip from 'jszip';
 
 interface CharacterDetailsProps {
   data: CharacterData;
   onRedo: () => void;
   onTweak: (newPrompt: string) => void;
-  onEditName: (name: string) => void;
-  onUpdateName: () => Promise<void>;
+  onEditName: (name: string) => void; 
+  onUpdateName: () => Promise<void>; 
 }
 
-interface DetailSectionProps {
-    title: string;
-    children: React.ReactNode;
-    delay: number;
-}
+const AudioIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+  </svg>
+);
 
-const DiceIcon = ({ className }: { className?: string }) => (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-      <circle cx="8.5" cy="8.5" r=".5" fill="currentColor"></circle>
-      <circle cx="15.5" cy="8.5" r=".5" fill="currentColor"></circle>
-      <circle cx="12" cy="12" r=".5" fill="currentColor"></circle>
-      <circle cx="8.5" cy="15.5" r=".5" fill="currentColor"></circle>
-      <circle cx="15.5" cy="15.5" r=".5" fill="currentColor"></circle>
+const ExportIcon = ({ className }: { className?: string }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+  </svg>
+);
+
+// Correct Dice Icon
+const DiceIcon: React.FC<{className?: string}> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h5M20 20v-5h-5M4 4l1.5 1.5A9 9 0 0120.5 11M20 20l-1.5-1.5A9 9 0 003.5 13" />
     </svg>
 );
 
-const DownloadIcon = ({ className }: { className?: string }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+const CheckIcon: React.FC<{className?: string}> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
     </svg>
 );
-
-const DetailSection: React.FC<DetailSectionProps> = ({ title, children, delay }) => {
-    const [visible, setVisible] = useState(false);
-
-    useEffect(() => {
-        const timer = setTimeout(() => setVisible(true), delay);
-        return () => clearTimeout(timer);
-    }, [delay]);
-    
-    return (
-        <div className={`transition-all duration-700 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-            <h3 className="text-xl font-bold text-green-400 border-b-2 border-green-500/30 pb-2 mb-3" style={{textShadow: '0 0 5px rgba(50,255,20,0.5)'}}>
-                {title}
-            </h3>
-            {children}
-        </div>
-    );
-};
 
 export const CharacterDetails: React.FC<CharacterDetailsProps> = ({ data, onRedo, onTweak, onEditName, onUpdateName }) => {
-  const [isTweaking, setIsTweaking] = useState(false);
-  const [tweakPrompt, setTweakPrompt] = useState(data.prompt);
-  const [isGeneratingName, setIsGeneratingName] = useState(false);
+  const [isPlayingVoice, setIsPlayingVoice] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isUpdatingName, setIsUpdatingName] = useState(false);
+  const [tempName, setTempName] = useState(data.details?.name || '');
   
   const details = data.details!;
   const images = data.images!;
 
-  const handleTweakSubmit = () => {
-    if (tweakPrompt.trim() && tweakPrompt !== data.prompt) {
-      onTweak(tweakPrompt);
+  useEffect(() => {
+    setTempName(details.name);
+  }, [details.name]);
+
+  const playVoice = async () => {
+    if (isPlayingVoice) return;
+    setIsPlayingVoice(true);
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const speechText = `I am ${details.name}. ${details.backstory.split('.')[0]}. My essence is ${details.personality.slice(0,2).join(' and ')}.`;
+      const audioBytes = await generateCharacterSpeech(speechText, details.voicePrompt);
+      const audioBuffer = await decodeAudioData(audioBytes, audioCtx, 24000, 1);
+      const source = audioCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioCtx.destination);
+      source.onended = () => setIsPlayingVoice(false);
+      source.start();
+    } catch (e) {
+      console.error(e);
+      setIsPlayingVoice(false);
     }
-    setIsTweaking(false);
   };
 
-  const handleNameReroll = async () => {
-    setIsGeneratingName(true);
-    await onUpdateName();
-    setIsGeneratingName(false);
+  const handleConfirmRename = () => {
+    const newName = tempName.trim();
+    if (newName && newName !== details.name) {
+      onEditName(newName);
+    }
+  };
+
+  const handleRerollName = async () => {
+    setIsUpdatingName(true);
+    try {
+        await onUpdateName();
+    } finally {
+        setIsUpdatingName(false);
+    }
   };
 
   const handleExport = async () => {
     setIsExporting(true);
     try {
       const zip = new JSZip();
+      const safeName = details.name.replace(/\s+/g, '_');
 
-      // Sanitize name for filename
-      const sanitizedName = details.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const bioText = `
+=== ${details.name.toUpperCase()} ===
+PERSONALITY: ${details.personality.join(', ')}
+VOICE PROFILE: ${details.voicePrompt}
 
-      // Create a markdown summary
-      let summary = `# ${details.name}\n\n`;
-      summary += `**Original Prompt:** ${data.prompt}\n\n`;
-      summary += `## Personality\n- ${details.personality.join('\n- ')}\n\n`;
-      summary += `## Backstory\n${details.backstory}\n\n`;
-      summary += `## Quest Arcs\n`;
-      details.quests.forEach(q => {
-        summary += `### ${q.title}\n${q.description}\n\n`;
-      });
+BACKSTORY:
+${details.backstory}
 
-      zip.file("summary.md", summary);
-      zip.file("details.json", JSON.stringify(details, null, 2));
+NARRATIVE ARCS:
+${details.quests.map(q => `- ${q.title}: ${q.description}`).join('\n')}
 
-      // Add images
+FORGED VIA GHOTET CHARACTER FORGE
+      `.trim();
+      zip.file(`${safeName}_Bio.txt`, bioText);
+
+      const exportPackage = {
+          metadata: { app: "Ghotet Forge", version: "3.0", timestamp: new Date().toISOString() },
+          character: {
+              details,
+              images: {
+                  main: images.main,
+                  poses: images.poses,
+                  orthos: images.orthos
+              }
+          }
+      };
+      zip.file(`${safeName}_Neural_Package.json`, JSON.stringify(exportPackage, null, 2));
+
       const imgFolder = zip.folder("images");
       if (imgFolder) {
-        imgFolder.file("main_portrait.png", images.main, { base64: true });
-        imgFolder.file("ortho_front.png", images.orthos.front, { base64: true });
-        imgFolder.file("ortho_side.png", images.orthos.side, { base64: true });
-        imgFolder.file("ortho_back.png", images.orthos.back, { base64: true });
-        imgFolder.file("pose_1.png", images.poses[0], { base64: true });
-        imgFolder.file("pose_2.png", images.poses[1], { base64: true });
+        imgFolder.file("main.png", images.main, { base64: true });
+        imgFolder.file("pose_neutral.png", images.poses[0], { base64: true });
+        imgFolder.file("pose_happy.png", images.poses[1], { base64: true });
+        imgFolder.file("pose_angry.png", images.poses[2], { base64: true });
+        imgFolder.file("pose_thoughtful.png", images.poses[3], { base64: true });
       }
 
-      // Generate zip and trigger download
       const content = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(content);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${sanitizedName}_character_package.zip`;
-      document.body.appendChild(a);
+      a.download = `${safeName}_Forge_Bundle.zip`;
       a.click();
-      document.body.removeChild(a);
       URL.revokeObjectURL(url);
-
-    } catch (error) {
-      console.error("Failed to export character:", error);
+    } catch (e) {
+      console.error("Export failed", e);
     } finally {
       setIsExporting(false);
     }
   };
-  
+
+  const hasNameChanged = tempName !== details.name;
+
   return (
     <div className="space-y-6">
-      <DetailSection title="Name" delay={50}>
-        <div className="flex items-center gap-3">
-            <input
-                type="text"
-                value={details.name}
-                onChange={(e) => onEditName(e.target.value)}
-                className="flex-grow bg-black border border-gray-700 rounded-md p-2 text-lg text-green-300 focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors duration-300"
-                aria-label="Character Name"
-            />
-            <button
-                onClick={handleNameReroll}
-                disabled={isGeneratingName}
-                className="p-2 rounded-md bg-green-500/10 border border-green-500 text-green-400 hover:bg-green-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                aria-label="Generate new name"
-            >
-                <DiceIcon className={`w-6 h-6 ${isGeneratingName ? 'animate-spin' : ''}`} />
+      <div className="flex justify-between items-start border-b border-gray-800 pb-4">
+        <div className="flex-grow group">
+          <label className="text-[10px] text-green-500 font-bold uppercase tracking-widest mb-1 block">Subject Identity</label>
+          <div className="flex items-center gap-2">
+              <input
+                  type="text"
+                  value={tempName}
+                  onChange={(e) => setTempName(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleConfirmRename()}
+                  placeholder="Subject name..."
+                  className="bg-transparent text-3xl font-bold text-white focus:outline-none focus:text-green-400 transition-all border-b border-transparent focus:border-green-500/30 w-full"
+              />
+              
+              <div className="flex items-center">
+                  {hasNameChanged ? (
+                      <button 
+                        onClick={handleConfirmRename}
+                        className="p-2 text-green-500 hover:text-green-400 transition-all scale-125 animate-pulse"
+                        title="Confirm Name Change"
+                      >
+                          <CheckIcon className="w-6 h-6" />
+                      </button>
+                  ) : (
+                      <button 
+                          onClick={handleRerollName} 
+                          disabled={isUpdatingName}
+                          className="p-2 text-gray-600 hover:text-green-400 transition-colors disabled:opacity-30"
+                          title="Neural Reroll Name"
+                      >
+                          <DiceIcon className={`w-6 h-6 ${isUpdatingName ? 'animate-spin' : ''}`} />
+                      </button>
+                  )}
+              </div>
+          </div>
+        </div>
+        <div className="flex gap-2">
+            <button onClick={handleExport} disabled={isExporting} title="Export Forge Bundle (.zip)" className={`p-3 rounded-full border border-gray-700 text-gray-500 hover:border-green-500 hover:text-green-400 transition-all ${isExporting ? 'animate-pulse' : ''}`}>
+                <ExportIcon className="w-5 h-5" />
+            </button>
+            <button onClick={playVoice} disabled={isPlayingVoice} title="Voice Synth" className={`p-3 rounded-full border border-green-500/30 text-green-400 hover:bg-green-500/10 transition-all ${isPlayingVoice ? 'animate-pulse scale-110 border-green-500' : ''}`}>
+                <AudioIcon className="w-6 h-6" />
             </button>
         </div>
-      </DetailSection>
+      </div>
       
-      <DetailSection title="Personality" delay={100}>
+      <div>
+        <h4 className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-2">Neural Traits</h4>
         <div className="flex flex-wrap gap-2">
             {details.personality.map((trait, i) => (
-                <span key={i} className="bg-green-900/50 text-green-300 px-3 py-1 rounded-full text-sm font-medium border border-green-800">
-                    {trait}
-                </span>
+                <span key={i} className="bg-green-500/5 text-green-400 px-3 py-1 rounded-sm text-xs border border-green-500/20">{trait}</span>
             ))}
         </div>
-      </DetailSection>
+      </div>
 
-      <DetailSection title="Backstory" delay={300}>
-        <p className="text-gray-400 leading-relaxed whitespace-pre-wrap">{details.backstory}</p>
-      </DetailSection>
+      <div>
+        <h4 className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-2">Origin Data</h4>
+        <p className="text-gray-400 text-sm leading-relaxed whitespace-pre-wrap">{details.backstory}</p>
+      </div>
 
-      <DetailSection title="Quest Arcs" delay={500}>
-        <ul className="space-y-4">
+      <div>
+        <h4 className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-2">Story Threads</h4>
+        <ul className="space-y-3">
             {details.quests.map((quest, i) => (
-                <li key={i}>
-                    <h4 className="font-semibold text-green-500">{quest.title}</h4>
-                    <p className="text-gray-400 text-sm">{quest.description}</p>
+                <li key={i} className="group border-l border-green-900/50 hover:border-green-500 pl-3 transition-all">
+                    <h5 className="font-semibold text-green-500 text-sm">{quest.title}</h5>
+                    <p className="text-gray-500 text-xs mt-1">{quest.description}</p>
                 </li>
             ))}
         </ul>
-      </DetailSection>
-
-      <div className="pt-6 border-t border-gray-800 flex flex-col sm:flex-row gap-4 flex-wrap">
-        <Button onClick={onRedo} variant="secondary">Rerun Original Prompt</Button>
-        <Button onClick={() => setIsTweaking(!isTweaking)} variant="secondary">
-          {isTweaking ? 'Cancel Tweak' : 'Adjust Prompt'}
-        </Button>
-        <Button onClick={handleExport} disabled={isExporting} variant="primary">
-          {isExporting ? (
-            'Packaging...'
-          ) : (
-            <span className="flex items-center gap-2">
-              <DownloadIcon className="w-5 h-5" />
-              Export Character
-            </span>
-          )}
-        </Button>
       </div>
 
-      {isTweaking && (
-        <div className="p-4 bg-gray-800/50 rounded-md">
-            <textarea
-                className="w-full bg-black border border-gray-700 rounded-md p-3 focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors duration-300"
-                value={tweakPrompt}
-                onChange={(e) => setTweakPrompt(e.target.value)}
-                rows={3}
-            />
-            <div className="mt-2 text-right">
-                <Button onClick={handleTweakSubmit}>Regenerate</Button>
-            </div>
-        </div>
-      )}
+      <div className="pt-6 border-t border-gray-800 flex gap-3">
+        <Button onClick={onRedo} variant="secondary" className="flex-1 text-[10px] uppercase">Re-Forge Visuals</Button>
+        <Button onClick={handleExport} variant="primary" className="flex-1 text-[10px] uppercase">Export Bundle</Button>
+      </div>
     </div>
   );
 };
