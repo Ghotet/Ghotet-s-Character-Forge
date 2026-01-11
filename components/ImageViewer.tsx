@@ -1,13 +1,12 @@
-
 import React, { useState } from 'react';
-import type { CharacterImages } from '../types';
+import type { CharacterImages, ImagePart } from '../types'; // Import ImagePart
 
 interface ImageViewerProps {
   images: CharacterImages;
 }
 
-const ImageThumbnail: React.FC<{src: string, alt: string, onClick: () => void, isSelected: boolean}> = ({src, alt, onClick, isSelected}) => {
-    const imageUrl = src.startsWith('http') ? src : `data:image/png;base64,${src}`;
+const ImageThumbnail: React.FC<{src: ImagePart, alt: string, onClick: () => void, isSelected: boolean}> = ({src, alt, onClick, isSelected}) => { // src is ImagePart
+    const imageUrl = src.data.startsWith('http') ? src.data : `data:${src.mimeType};base64,${src.data}`; // Use ImagePart properties
     return (
         <div 
             onClick={onClick}
@@ -19,7 +18,7 @@ const ImageThumbnail: React.FC<{src: string, alt: string, onClick: () => void, i
 }
 
 export const ImageViewer: React.FC<ImageViewerProps> = ({ images }) => {
-  const [mainImage, setMainImage] = useState(images.main);
+  const [mainImage, setMainImage] = useState<ImagePart>(images.main); // mainImage is ImagePart
 
   const allImages = [
     { id: 'main', src: images.main, alt: 'Source Image' },
@@ -32,7 +31,7 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ images }) => {
   return (
     <div>
       <div className="aspect-square w-full rounded-lg overflow-hidden mb-4 border border-gray-800 shadow-lg shadow-black/50 bg-black">
-        <img src={mainImage.startsWith('http') ? mainImage : `data:image/png;base64,${mainImage}`} alt="Main character view" className="w-full h-full object-contain transition-all duration-300" />
+        <img src={mainImage.data.startsWith('http') ? mainImage.data : `data:${mainImage.mimeType};base64,${mainImage.data}`} alt="Main character view" className="w-full h-full object-contain transition-all duration-300" /> {/* Use mainImage properties */}
       </div>
       <div className="grid grid-cols-5 gap-2">
         {allImages.map(img => img.src && (

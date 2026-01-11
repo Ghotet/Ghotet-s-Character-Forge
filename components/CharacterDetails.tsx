@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import type { CharacterData } from '../types';
 import { Button } from './Button';
@@ -56,7 +55,8 @@ export const CharacterDetails: React.FC<CharacterDetailsProps> = ({ data, onRedo
     setIsPlayingVoice(true);
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const speechText = `I am ${details.name}. ${details.backstory.split('.')[0]}. My essence is ${details.personality.slice(0,2).join(' and ')}.`;
+      const safePersonalityForVoice = details.personality ?? []; // Defensive check
+      const speechText = `I am ${details.name}. ${details.backstory.split('.')[0]}. My essence is ${safePersonalityForVoice.slice(0,2).join(' and ')}.`;
       const audioBytes = await generateCharacterSpeech(speechText, details.voicePrompt);
       const audioBuffer = await decodeAudioData(audioBytes, audioCtx, 24000, 1);
       const source = audioCtx.createBufferSource();
@@ -91,10 +91,11 @@ export const CharacterDetails: React.FC<CharacterDetailsProps> = ({ data, onRedo
     try {
       const zip = new JSZip();
       const safeName = details.name.replace(/\s+/g, '_');
+      const safePersonalityForBio = details.personality ?? []; // Defensive check
 
       const bioText = `
 === ${details.name.toUpperCase()} ===
-PERSONALITY: ${details.personality.join(', ')}
+PERSONALITY: ${safePersonalityForBio.join(', ')}
 VOICE PROFILE: ${details.voicePrompt}
 
 BACKSTORY:
@@ -107,6 +108,7 @@ FORGED VIA GHOTET CHARACTER FORGE
       `.trim();
       zip.file(`${safeName}_Bio.txt`, bioText);
 
+      // Include interactiveState and costumes in the export package
       const exportPackage = {
           metadata: { app: "Ghotet Forge", version: "3.0", timestamp: new Date().toISOString() },
           character: {
@@ -114,19 +116,25 @@ FORGED VIA GHOTET CHARACTER FORGE
               images: {
                   main: images.main,
                   poses: images.poses,
-                  orthos: images.orthos
-              }
+                  orthos: images.orthos,
+                  costumes: images.costumes || [], // Ensure costumes are included
+              },
+              interactiveState: data.interactiveState, // Include interactive state
           }
       };
       zip.file(`${safeName}_Neural_Package.json`, JSON.stringify(exportPackage, null, 2));
 
       const imgFolder = zip.folder("images");
       if (imgFolder) {
-        imgFolder.file("main.png", images.main, { base64: true });
-        imgFolder.file("pose_neutral.png", images.poses[0], { base64: true });
-        imgFolder.file("pose_happy.png", images.poses[1], { base64: true });
-        imgFolder.file("pose_angry.png", images.poses[2], { base64: true });
-        imgFolder.file("pose_thoughtful.png", images.poses[3], { base64: true });
+        imgFolder.file("main.png", images.main.data, { base64: true }); // Access .data property
+        imgFolder.file("pose_neutral.png", images.poses[0].data, { base64: true }); // Access .data property
+        imgFolder.file("pose_happy.png", images.poses[1].data, { base64: true }); // Access .data property
+        imgFolder.file("pose_angry.png", images.poses[2].data, { base64: true }); // Access .data property
+        imgFolder.file("pose_thoughtful.png", images.poses[3].data, { base64: true }); // Access .data property
+        // Export costumes too
+        images.costumes?.forEach((costume, idx) => {
+            imgFolder.file(`costume_${idx + 1}.png`, costume.data, { base64: true }); // Access .data property
+        });
       }
 
       const content = await zip.generateAsync({ type: "blob" });

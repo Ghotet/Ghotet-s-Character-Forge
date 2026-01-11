@@ -1,6 +1,5 @@
-
 import { GoogleGenAI, Type, Modality } from '@google/genai';
-import type { CharacterDetails, Settings, ChatMessage } from '../types';
+import type { CharacterDetails, Settings, ChatMessage, ImagePart } from '../types';
 
 const API_KEY = process.env.API_KEY;
 const ai = new GoogleGenAI({ apiKey: API_KEY || '' });
@@ -18,10 +17,10 @@ const characterDetailsSchema = {
                 type: Type.OBJECT,
                 properties: {
                     title: { type: Type.STRING },
-                    description: { type: Type.STRING },
+                    description: { type: Type.STRING }
                 }
             }
-        },
+        }
     },
     required: ["name", "personality", "backstory", "voicePrompt", "quests"]
 };
@@ -59,14 +58,17 @@ export const generateCharacterSpeech = async (text: string, voicePrompt: string)
 export const getCharacterChatResponse = async (
   history: ChatMessage[], 
   userInput: string, 
-  details: CharacterDetails
+  details: CharacterDetails,
+  memoryBank: string[]
 ): Promise<{ text: string, emotion: string, resonanceChange?: number }> => {
+  const safePersonality = details.personality ?? []; // Defensive check
   const systemInstruction = `You are ${details.name}. 
-  Personality: ${details.personality.join(', ')}. 
+  Personality: ${safePersonality.join(', ')}. 
   Backstory: ${details.backstory}. 
+  Recent memories from past interactions: ${memoryBank.join('; ')}.
   Roleplay as this character in a dating-sim style interaction. Keep responses punchy and under 3 sentences.
   You MUST respond ONLY with a raw JSON object.
-  JSON structure: {"text": "your spoken response", "emotion": "one of: happy, angry, thoughtful, neutral", "resonanceChange": number between -5 and 10 based on how the user's input would affect your relationship}`;
+  JSON structure: {"text": "your spoken response", "emotion": "one of: happy, angry, thoughtful, neutral", "resonanceChange": number between 5 and 20 based on how the user's input would affect your relationship}`; // Increased range for faster testing
 
   try {
     const response = await ai.models.generateContent({
@@ -130,7 +132,7 @@ export async function decodeAudioData(
   return buffer;
 }
 
-export const generateConceptImages = async (prompt: string, dimension: any, settings: Settings): Promise<string[]> => {
+export const generateConceptImages = async (prompt: string, dimension: any, settings: Settings): Promise<ImagePart[]> => { // Changed return type to ImagePart[]
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
     contents: `Full-length standing character concept art. Head-to-toe view. The entire character including legs and shoes must be fully visible and centered in the frame. No cropping. Subject: ${prompt}. Cinematic lighting, white background.`,
@@ -138,19 +140,19 @@ export const generateConceptImages = async (prompt: string, dimension: any, sett
   });
   return response.candidates?.[0]?.content?.parts
     ?.filter(p => p.inlineData)
-    ?.map(p => p.inlineData!.data) || [];
+    ?.map(p => ({ data: p.inlineData!.data, mimeType: p.inlineData!.mimeType })) || []; // Return ImagePart objects
 };
 
-export const generateCharacterDetailsFromPrompt = async (prompt: string, imageBase64: string, settings: Settings): Promise<CharacterDetails> => {
+export const generateCharacterDetailsFromPrompt = async (imagePart: ImagePart, prompt: string, settings: Settings): Promise<CharacterDetails> => { // Changed imageBase64: string to imagePart: ImagePart
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: { parts: [{ inlineData: { data: imageBase64, mimeType: 'image/png' } }, { text: prompt }] },
+    contents: { parts: [{ inlineData: { data: imagePart.data, mimeType: imagePart.mimeType } }, { text: prompt }] }, // Use imagePart properties
     config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema },
   });
   return JSON.parse(response.text.trim());
 };
 
-export const generateOrthosAndPoses = async (imageBase64: string, desc: string, settings: Settings) => {
+export const generateOrthosAndPoses = async (baseImage: ImagePart, desc: string, settings: Settings) => { // Changed imageBase64: string to baseImage: ImagePart
     const emotionPrompts = [
       "Head-to-toe full body view, standing neutral, entire body in frame.",
       "Head-to-toe full body view, laughing joyfully, wide smile, expressive standing pose.",
@@ -163,25 +165,54 @@ export const generateOrthosAndPoses = async (imageBase64: string, desc: string, 
         model: 'gemini-2.5-flash-image',
         contents: { 
           parts: [
-            { inlineData: { data: imageBase64, mimeType: 'image/png' } }, 
+            { inlineData: { data: baseImage.data, mimeType: baseImage.mimeType } }, // Use baseImage properties
             { text: `Maintain character consistency. ${promptText}. Ensure the entire character fits in the frame from top to bottom.` }
           ] 
         },
         config: { imageConfig: { aspectRatio: "3:4" } }
       });
-      return res.candidates![0].content.parts.find(p => p.inlineData)!.inlineData!.data;
+      const posePart = res.candidates![0].content.parts.find(p => p.inlineData)!.inlineData!;
+      return { data: posePart.data, mimeType: posePart.mimeType }; // Return ImagePart
     }));
 
     return { 
-      orthos: { front: imageBase64, side: imageBase64, back: imageBase64 }, 
+      orthos: { 
+        front: baseImage, 
+        side: baseImage, 
+        back: baseImage 
+      }, 
       poses 
     };
 };
 
-export const fileToBase64 = (file: File): Promise<string> => {
+export const generateCostumeImage = async (baseImage: ImagePart, characterDetails: CharacterDetails, costumePrompt: string): Promise<ImagePart> => { // Changed baseImage: string to ImagePart, return type to ImagePart
+  const safePersonality = characterDetails.personality ?? []; // Defensive check
+  const combinedPrompt = `Based on the character in the image, transform their outfit to a highly seductive ${costumePrompt}. Maintain the character's facial features and overall body shape as much as possible, focusing only on the change of attire. Ensure the pose is alluring and the overall aesthetic is tasteful and seductive. Do not alter the background; keep it clean and simple. Character personality: ${safePersonality.join(', ')}.`;
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: { 
+      parts: [
+        { inlineData: { data: baseImage.data, mimeType: baseImage.mimeType } }, // Use baseImage properties
+        { text: combinedPrompt }
+      ] 
+    },
+    config: { imageConfig: { aspectRatio: "3:4" } }
+  });
+  
+  const costumeImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData;
+  if (!costumeImagePart) {
+    throw new Error("Failed to generate costume image.");
+  }
+  return { data: costumeImagePart.data, mimeType: costumeImagePart.mimeType }; // Return ImagePart
+};
+
+export const fileToBase64 = (file: File): Promise<ImagePart> => { // Changed return type to ImagePart
     return new Promise((resolve) => {
         const reader = new FileReader();
-        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onload = () => resolve({
+          data: (reader.result as string).split(',')[1],
+          mimeType: file.type
+        });
         reader.readAsDataURL(file);
     });
 };
@@ -201,19 +232,20 @@ export const generateRandomPrompts = async (settings: Settings): Promise<string[
   }
 };
 
-export const generateCharacterDetailsFromImage = async (imageBase64: string, settings: Settings): Promise<CharacterDetails> => {
+export const generateCharacterDetailsFromImage = async (imagePart: ImagePart, settings: Settings): Promise<CharacterDetails> => { // Changed imageBase64: string to imagePart: ImagePart
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: { parts: [{ inlineData: { data: imageBase64, mimeType: 'image/png' } }, { text: "Analyze this character and create a profile in JSON." }] },
+    contents: { parts: [{ inlineData: { data: imagePart.data, mimeType: imagePart.mimeType } }, { text: "Analyze this character and create a profile in JSON." }] }, // Use imagePart properties
     config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema },
   });
   return JSON.parse(response.text.trim());
 };
 
-export const editImageWithInstructions = async (img: string, inst: string, settings: Settings) => {
+export const editImageWithInstructions = async (imagePart: ImagePart, inst: string, settings: Settings): Promise<ImagePart> => { // Changed img: string to imagePart: ImagePart, return type to ImagePart
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
-        contents: { parts: [{ inlineData: { data: img, mimeType: 'image/png' } }, { text: inst }] }
+        contents: { parts: [{ inlineData: { data: imagePart.data, mimeType: imagePart.mimeType } }, { text: inst }] } // Use imagePart properties
     });
-    return response.candidates![0].content.parts.find(p => p.inlineData)!.inlineData!.data;
+    const editedImagePart = response.candidates![0].content.parts.find(p => p.inlineData)!.inlineData!;
+    return { data: editedImagePart.data, mimeType: editedImagePart.mimeType }; // Return ImagePart
 };

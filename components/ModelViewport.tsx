@@ -1,11 +1,11 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { Button } from './Button';
+import type { ImagePart } from '../types'; // Import ImagePart
 
 interface ModelViewportProps {
-  image: string;
+  image: ImagePart; // Changed from string to ImagePart
   onReset: () => void;
 }
 
@@ -78,7 +78,7 @@ export const ModelViewport: React.FC<ModelViewportProps> = ({ image, onReset }) 
 
     // --- Character Model Projection ---
     const textureLoader = new THREE.TextureLoader();
-    const imageUrl = image.startsWith('http') ? image : `data:image/png;base64,${image}`;
+    const imageUrl = image.data.startsWith('http') ? image.data : `data:${image.mimeType};base64,${image.data}`; // Use ImagePart properties
 
     let geometry: THREE.PlaneGeometry | undefined;
     let material: THREE.MeshStandardMaterial | undefined;

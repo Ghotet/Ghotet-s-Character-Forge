@@ -1,4 +1,3 @@
-
 export type CharacterMode = 'generator' | 'uploader' | 'interactive';
 
 export type AppState =
@@ -9,6 +8,11 @@ export type AppState =
   | 'displayingCharacter'
   | 'error';
 
+export interface ImagePart {
+  data: string; // Base64 encoded string
+  mimeType: string; // IANA standard MIME type, e.g., 'image/png', 'image/jpeg'
+}
+
 export interface CharacterDetails {
   name: string;
   personality: string[];
@@ -18,13 +22,30 @@ export interface CharacterDetails {
 }
 
 export interface CharacterImages {
-  main: string;
+  main: ImagePart; // Changed from string to ImagePart
   orthos: {
-    front: string;
-    side: string;
-    back: string;
+    front: ImagePart; // Changed from string to ImagePart
+    side: ImagePart; // Changed from string to ImagePart
+    back: ImagePart; // Changed from string to ImagePart
   };
-  poses: string[]; // 0: Neutral, 1: Happy/Laugh, 2: Action/Angry
+  poses: ImagePart[]; // Changed from string[] to ImagePart[]
+  costumes?: ImagePart[]; // New: Stores ImagePart objects of unlocked costumes
+}
+
+export interface Gift {
+  id: string;
+  name: string;
+  description: string;
+  cost: number;
+  effect: number; // how much resonance it boosts
+}
+
+export interface InteractiveState {
+  resonance: number;
+  nexusCredits: number;
+  inventory: Gift[];
+  memoryBank: string[]; // Stores snippets of conversation for persistent context
+  chatHistory: ChatMessage[];
 }
 
 export interface CharacterData {
@@ -32,7 +53,7 @@ export interface CharacterData {
   images: CharacterImages | null;
   prompt: string;
   dimension: '2D' | '3D' | null;
-  resonance?: number; // Dating-sim point system
+  interactiveState?: InteractiveState; // Optional, for interactive mode
 }
 
 export interface ChatMessage {
