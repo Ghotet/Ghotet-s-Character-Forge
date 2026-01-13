@@ -1,251 +1,260 @@
-import { GoogleGenAI, Type, Modality } from '@google/genai';
-import type { CharacterDetails, Settings, ChatMessage, ImagePart } from '../types';
 
-const API_KEY = process.env.API_KEY;
-const ai = new GoogleGenAI({ apiKey: API_KEY || '' });
+import { GoogleGenAI, Type, Modality, GenerateContentResponse } from '@google/genai';
+import type { CharacterDetails, Settings, ChatMessage, ImagePart, RelationshipLevel } from '../types';
+
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const characterDetailsSchema = {
-    type: Type.OBJECT,
-    properties: {
-        name: { type: Type.STRING },
-        personality: { type: Type.ARRAY, items: { type: Type.STRING } },
-        backstory: { type: Type.STRING },
-        voicePrompt: { type: Type.STRING, description: "A one sentence description of how the character sounds" },
-        quests: {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    title: { type: Type.STRING },
-                    description: { type: Type.STRING }
-                }
-            }
+  type: Type.OBJECT,
+  properties: {
+    name: { type: Type.STRING },
+    personality: { type: Type.ARRAY, items: { type: Type.STRING } },
+    backstory: { type: Type.STRING },
+    voicePrompt: { type: Type.STRING, description: "Description of how the character sounds" },
+    baseApparel: { type: Type.ARRAY, items: { type: Type.STRING }, description: "List of 5-7 specific items worn (e.g. 'black hoodie', 'leather skirt', 'boots')" },
+    quests: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          description: { type: Type.STRING }
         }
-    },
-    required: ["name", "personality", "backstory", "voicePrompt", "quests"]
+      }
+    }
+  },
+  required: ["name", "personality", "backstory", "voicePrompt", "quests", "baseApparel"]
 };
 
-const FALLBACK_PROMPTS = [
-    "A grizzled space pirate with a cybernetic parrot.",
-    "An elemental spirit of a forgotten, overgrown city.",
-    "A time-traveling detective from a neo-noir future.",
-    "A mischievous rogue who can talk to shadows.",
-    "A solar knight clad in living gold armor.",
-    "A cybernetic monk seeking enlightenment in the code.",
-    "A gothic vampire duelist with a rapier of frozen blood.",
-    "A wasteland scavenger with a mechanical wolf companion."
-];
+const extractJson = (text: string) => {
+  try {
+    return JSON.parse(text.trim());
+  } catch (e) {
+    const match = text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (match && match[1]) return JSON.parse(match[1].trim());
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      return JSON.parse(text.substring(firstBrace, lastBrace + 1).trim());
+    }
+    throw new Error("No valid JSON found.");
+  }
+};
 
 export const generateCharacterSpeech = async (text: string, voicePrompt: string): Promise<Uint8Array> => {
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text: `Say with a ${voicePrompt} voice: ${text}` }] }],
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: 'Kore' },
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text: `High-pitched, cute, seductive anime girl voice. Speak this text with emotion: ${text}` }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
         },
       },
-    },
-  });
-
-  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!base64Audio) throw new Error("No audio generated");
-  return decodeBase64(base64Audio);
+    });
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!base64Audio) throw new Error("No audio.");
+    return decodeBase64(base64Audio);
+  } catch (error) { throw new Error("Speech failed"); }
 };
 
 export const getCharacterChatResponse = async (
-  history: ChatMessage[], 
-  userInput: string, 
+  history: ChatMessage[],
+  userInput: string,
   details: CharacterDetails,
-  memoryBank: string[]
-): Promise<{ text: string, emotion: string, resonanceChange?: number }> => {
-  const safePersonality = details.personality ?? []; // Defensive check
-  const systemInstruction = `You are ${details.name}. 
-  Personality: ${safePersonality.join(', ')}. 
-  Backstory: ${details.backstory}. 
-  Recent memories from past interactions: ${memoryBank.join('; ')}.
-  Roleplay as this character in a dating-sim style interaction. Keep responses punchy and under 3 sentences.
-  You MUST respond ONLY with a raw JSON object.
-  JSON structure: {"text": "your spoken response", "emotion": "one of: happy, angry, thoughtful, neutral", "resonanceChange": number between 5 and 20 based on how the user's input would affect your relationship}`; // Increased range for faster testing
+  memoryBank: string[],
+  relationship: RelationshipLevel,
+  affinity: number
+): Promise<{ text: string, emotion: string, affinityGain: number, creditsGain: number }> => {
+  const systemInstruction = `You are ${details.name}. Level: ${relationship}. Affinity: ${affinity}/1000.
+  Roleplay as a seductive anime-style girl. Keep responses short and engaging. 
+  Personality: ${details.personality.join(', ')}.
+  Return JSON: {"text": "...", "emotion": "happy|angry|thoughtful|neutral", "affinityGain": 5-15, "creditsGain": 10-20}`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role, parts: [{ text: m.text }] })),
-        { role: 'user', parts: [{ text: userInput }] }
-      ],
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-      }
-    });
-
-    const rawText = response.text || "{}";
-    const cleanJson = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(cleanJson);
-  } catch (e) {
-    console.error("Chat parsing error:", e);
-    return { text: "My neural link is flickering...", emotion: "thoughtful", resonanceChange: 0 };
-  }
-};
-
-export const rerollCharacterName = async (details: CharacterDetails): Promise<string> => {
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: `Based on this character profile, generate 1 unique and fitting name. 
-    Personality: ${details.personality.join(', ')}. 
-    Backstory: ${details.backstory}.
-    Return ONLY the name string.`,
-    config: { responseMimeType: 'text/plain' }
+    contents: [...history.map(m => ({ role: m.role, parts: [{ text: m.text }] })), { role: 'user', parts: [{ text: userInput }] }],
+    config: { systemInstruction, responseMimeType: "application/json" }
   });
-  return response.text.trim();
+  return extractJson(response.text);
 };
 
-function decodeBase64(base64: string): Uint8Array {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
-export async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number = 24000,
-  numChannels: number = 1
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
-
-export const generateConceptImages = async (prompt: string, dimension: any, settings: Settings): Promise<ImagePart[]> => { // Changed return type to ImagePart[]
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: `Full-length standing character concept art. Head-to-toe view. The entire character including legs and shoes must be fully visible and centered in the frame. No cropping. Subject: ${prompt}. Cinematic lighting, white background.`,
-    config: { imageConfig: { aspectRatio: "3:4" } }
-  });
-  return response.candidates?.[0]?.content?.parts
-    ?.filter(p => p.inlineData)
-    ?.map(p => ({ data: p.inlineData!.data, mimeType: p.inlineData!.mimeType })) || []; // Return ImagePart objects
+export const generateConceptImages = async (prompt: string, settings: Settings): Promise<ImagePart[]> => {
+  const fullPrompt = `Photorealistic full-length head-to-toe portrait including feet and shoes. Professional studio lighting, detailed background. Subject: ${prompt}. Standing front-facing.`;
+  const fetchImage = async () => {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: fullPrompt,
+        config: { imageConfig: { aspectRatio: "9:16" } }
+      });
+      const part = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData;
+      return part ? { data: part.data, mimeType: part.mimeType } : null;
+    } catch (e) { return null; }
+  };
+  const results = await Promise.all([fetchImage(), fetchImage(), fetchImage(), fetchImage()]);
+  return results.filter((r): r is ImagePart => r !== null);
 };
 
-export const generateCharacterDetailsFromPrompt = async (imagePart: ImagePart, prompt: string, settings: Settings): Promise<CharacterDetails> => { // Changed imageBase64: string to imagePart: ImagePart
+export const generateCharacterDetailsFromPrompt = async (imagePart: ImagePart, prompt: string, settings: Settings): Promise<CharacterDetails> => {
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: { parts: [{ inlineData: { data: imagePart.data, mimeType: imagePart.mimeType } }, { text: prompt }] }, // Use imagePart properties
+    contents: { parts: [{ inlineData: { data: imagePart.data, mimeType: imagePart.mimeType } }, { text: prompt }] },
     config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema },
   });
-  return JSON.parse(response.text.trim());
+  return extractJson(response.text);
 };
 
-export const generateOrthosAndPoses = async (baseImage: ImagePart, desc: string, settings: Settings) => { // Changed imageBase64: string to baseImage: ImagePart
-    const emotionPrompts = [
-      "Head-to-toe full body view, standing neutral, entire body in frame.",
-      "Head-to-toe full body view, laughing joyfully, wide smile, expressive standing pose.",
-      "Head-to-toe full body view, aggressive angry combat pose, snarling expression.",
-      "Head-to-toe full body view, thoughtful contemplative pose, finger to chin."
-    ];
-
-    const poses = await Promise.all(emotionPrompts.map(async (promptText) => {
+export const generateEmotionalPoses = async (baseImage: ImagePart, settings: Settings) => {
+  const emotions = ["neutral", "joyful", "angry", "thoughtful seductive"];
+  return await Promise.all(emotions.map(async (emotion) => {
+    try {
       const res = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
-        contents: { 
+        contents: {
           parts: [
-            { inlineData: { data: baseImage.data, mimeType: baseImage.mimeType } }, // Use baseImage properties
-            { text: `Maintain character consistency. ${promptText}. Ensure the entire character fits in the frame from top to bottom.` }
-          ] 
+            { inlineData: { data: baseImage.data, mimeType: baseImage.mimeType } },
+            { text: `Maintain character features and background EXACTLY. The subject must be standing in a front-facing pose, facing the viewer directly. Full-body portrait showing head-to-toe including feet and shoes. The subject MUST NOT be cropped. Pose: ${emotion}. High quality.` }
+          ]
         },
-        config: { imageConfig: { aspectRatio: "3:4" } }
+        config: { imageConfig: { aspectRatio: "9:16" } }
       });
-      const posePart = res.candidates![0].content.parts.find(p => p.inlineData)!.inlineData!;
-      return { data: posePart.data, mimeType: posePart.mimeType }; // Return ImagePart
-    }));
-
-    return { 
-      orthos: { 
-        front: baseImage, 
-        side: baseImage, 
-        back: baseImage 
-      }, 
-      poses 
-    };
+      const part = res.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData;
+      return part ? { data: part.data, mimeType: part.mimeType } : baseImage;
+    } catch (e) { return baseImage; }
+  }));
 };
 
-export const generateCostumeImage = async (baseImage: ImagePart, characterDetails: CharacterDetails, costumePrompt: string): Promise<ImagePart> => { // Changed baseImage: string to ImagePart, return type to ImagePart
-  const safePersonality = characterDetails.personality ?? []; // Defensive check
-  const combinedPrompt = `Based on the character in the image, transform their outfit to a highly seductive ${costumePrompt}. Maintain the character's facial features and overall body shape as much as possible, focusing only on the change of attire. Ensure the pose is alluring and the overall aesthetic is tasteful and seductive. Do not alter the background; keep it clean and simple. Character personality: ${safePersonality.join(', ')}.`;
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: { 
-      parts: [
-        { inlineData: { data: baseImage.data, mimeType: baseImage.mimeType } }, // Use baseImage properties
-        { text: combinedPrompt }
-      ] 
-    },
-    config: { imageConfig: { aspectRatio: "3:4" } }
-  });
+export const generateModifiedImage = async (
+    baseImage: ImagePart, 
+    removedItems: string[], 
+    environment: string, 
+    style?: string
+): Promise<ImagePart> => {
+  // Enhanced bikini-first logic for removal
+  const envPrompt = environment === "Original" ? "Maintain the exact original background." : `Background is now a ${environment}.`;
   
-  const costumeImagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData;
-  if (!costumeImagePart) {
-    throw new Error("Failed to generate costume image.");
+  // Explicitly prompt for bikini top/bottoms when items are removed rather than new outfits
+  let apparelPrompt = "";
+  if (removedItems.length > 0) {
+      apparelPrompt = `Remove the following items: ${removedItems.join(', ')}. 
+      If a shirt, top, or jacket is removed, the subject MUST wear a matching tiny bikini top. 
+      If pants, skirt, or bottom-wear is removed, the subject MUST wear matching tiny bikini bottoms.
+      Maintain character likeness perfectly.`;
+  } else {
+      apparelPrompt = "Keep current outfit.";
   }
-  return { data: costumeImagePart.data, mimeType: costumeImagePart.mimeType }; // Return ImagePart
+  
+  const stylePrompt = style ? `Change outfit style to ${style}.` : "";
+
+  const prompt = `Maintain character features perfectly. ${envPrompt} ${apparelPrompt} ${stylePrompt} 
+  Full body portrait showing head-to-toe including feet and shoes. The subject must be front-facing. Photorealistic, 8k, high quality. The subject MUST NOT be cropped at the ankles or head.`;
+  
+  const res = await ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: {
+      parts: [
+        { inlineData: { data: baseImage.data, mimeType: baseImage.mimeType } },
+        { text: prompt }
+      ]
+    },
+    config: { imageConfig: { aspectRatio: "9:16" } }
+  });
+  const part = res.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData;
+  if (!part) throw new Error("Image generation failed.");
+  return { data: part.data, mimeType: part.mimeType };
 };
 
-export const fileToBase64 = (file: File): Promise<ImagePart> => { // Changed return type to ImagePart
-    return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve({
-          data: (reader.result as string).split(',')[1],
-          mimeType: file.type
-        });
-        reader.readAsDataURL(file);
-    });
+export const generateFullBodyImage = async (baseImage: ImagePart, settings: Settings, style?: 'realistic' | 'anime'): Promise<ImagePart> => {
+  let styleText = "Maintain background and features exactly.";
+  if (style === 'realistic') {
+      styleText = "Manifest this character as a photorealistic human. Detailed skin textures, natural lighting, real fabrics. She should look like a real person standing in the original setting.";
+  } else if (style === 'anime') {
+      styleText = "Manifest this character in a high-quality 2D anime style. Cel-shading, vibrant colors, stylistic proportions. Maintain the original background features but in anime aesthetic.";
+  }
+
+  const res = await ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: {
+      parts: [
+        { inlineData: { data: baseImage.data, mimeType: baseImage.mimeType } },
+        { text: `Generate a photorealistic full-body, head-to-toe portrait version of this character including feet and shoes. The subject should be front-facing, standing as if talking to the viewer. ${styleText} Do not crop the legs. High quality.` }
+      ]
+    },
+    config: { imageConfig: { aspectRatio: "9:16" } }
+  });
+  const part = res.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData;
+  return part ? { data: part.data, mimeType: part.mimeType } : baseImage;
+};
+
+export const generateCharacterDetailsFromImage = async (imagePart: ImagePart, settings: Settings): Promise<CharacterDetails> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: { parts: [{ inlineData: { data: imagePart.data, mimeType: imagePart.mimeType } }, { text: "Analyze this character and return a profile in JSON including baseApparel list." }] },
+    config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema },
+  });
+  return extractJson(response.text);
 };
 
 export const generateRandomPrompts = async (settings: Settings): Promise<string[]> => {
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: "Generate 4 short character prompts for a fantasy game.",
-      config: { responseMimeType: 'application/json', responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } } },
+      contents: "Generate 4 brief seductive character concepts for high-quality portraits. Be creative with outfits: include streetwear, tactical gear, short skirts, tube tops, and micro-apparel. AVOID repetitive gowns and ball dresses. JSON array of strings.",
+      config: { responseMimeType: 'application/json' },
     });
-    return JSON.parse(response.text.trim());
-  } catch (e) {
-    // If quota exceeded or error, return local fallback
-    console.warn("Using fallback prompts due to API error:", e);
-    return FALLBACK_PROMPTS.sort(() => 0.5 - Math.random()).slice(0, 4);
-  }
+    return extractJson(response.text);
+  } catch (e) { return ["Dark elf in techwear shorts", "Bunny girl in a tube top", "Latex cyborg merc", "Street ninja in micro-skirt"]; }
 };
 
-export const generateCharacterDetailsFromImage = async (imagePart: ImagePart, settings: Settings): Promise<CharacterDetails> => { // Changed imageBase64: string to imagePart: ImagePart
+export const generateRandomName = async (details: CharacterDetails): Promise<string> => {
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: { parts: [{ inlineData: { data: imagePart.data, mimeType: imagePart.mimeType } }, { text: "Analyze this character and create a profile in JSON." }] }, // Use imagePart properties
-    config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema },
+    contents: `Generate a seductive name for: ${details.personality.join(', ')}. Return name only.`,
   });
-  return JSON.parse(response.text.trim());
+  return response.text.trim() || "Nova";
 };
 
-export const editImageWithInstructions = async (imagePart: ImagePart, inst: string, settings: Settings): Promise<ImagePart> => { // Changed img: string to imagePart: ImagePart, return type to ImagePart
+export const generateRenamedProfile = async (currentDetails: CharacterDetails, newName: string): Promise<CharacterDetails> => {
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: { parts: [{ inlineData: { data: imagePart.data, mimeType: imagePart.mimeType } }, { text: inst }] } // Use imagePart properties
+        model: 'gemini-3-flash-preview',
+        contents: `Rewrite the following character profile's backstory to use the new name: "${newName}". Keep the personality and quests consistent.
+        
+        Current Name: ${currentDetails.name}
+        Current Backstory: ${currentDetails.backstory}
+        
+        Return the full updated profile as JSON.`,
+        config: { responseMimeType: 'application/json', responseSchema: characterDetailsSchema }
     });
-    const editedImagePart = response.candidates![0].content.parts.find(p => p.inlineData)!.inlineData!;
-    return { data: editedImagePart.data, mimeType: editedImagePart.mimeType }; // Return ImagePart
+    return extractJson(response.text);
 };
+
+const decodeBase64 = (base64: string): Uint8Array => {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+  return bytes;
+};
+
+export async function decodeAudioData(data: Uint8Array, ctx: AudioContext, sampleRate: number = 24000, numChannels: number = 1): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+  }
+  return buffer;
+}
+
+export const fileToBase64 = (file: File): Promise<ImagePart> => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ data: (reader.result as string).split(',')[1], mimeType: file.type });
+    reader.readAsDataURL(file);
+  });
+};
+
+export const generateStrippedImage = generateModifiedImage;
+export const generateCostumeImage = (baseImage: ImagePart, details: any, style: string) => generateModifiedImage(baseImage, [], "Original", style);

@@ -1,5 +1,3 @@
-export type CharacterMode = 'generator' | 'uploader' | 'interactive';
-
 export type AppState =
   | 'idle'
   | 'generatingConcepts'
@@ -9,51 +7,47 @@ export type AppState =
   | 'error';
 
 export interface ImagePart {
-  data: string; // Base64 encoded string
-  mimeType: string; // IANA standard MIME type, e.g., 'image/png', 'image/jpeg'
+  data: string; // Base64
+  mimeType: string;
 }
 
 export interface CharacterDetails {
   name: string;
   personality: string[];
   backstory: string;
-  quests: { title: string; description:string }[];
+  quests: { title: string; description: string }[];
   voicePrompt: string;
+  baseApparel: string[]; // List of clothes identified by AI
 }
 
 export interface CharacterImages {
-  main: ImagePart; // Changed from string to ImagePart
-  orthos: {
-    front: ImagePart; // Changed from string to ImagePart
-    side: ImagePart; // Changed from string to ImagePart
-    back: ImagePart; // Changed from string to ImagePart
-  };
-  poses: ImagePart[]; // Changed from string[] to ImagePart[]
-  costumes?: ImagePart[]; // New: Stores ImagePart objects of unlocked costumes
+  main: ImagePart;
+  original?: ImagePart;
+  poses: ImagePart[];
+  costumes?: ImagePart[];
 }
 
-export interface Gift {
-  id: string;
-  name: string;
-  description: string;
-  cost: number;
-  effect: number; // how much resonance it boosts
-}
+export type RelationshipLevel = 'Stranger' | 'Acquaintance' | 'Companion' | 'Intimate' | 'Soulmate';
 
 export interface InteractiveState {
   resonance: number;
   nexusCredits: number;
-  inventory: Gift[];
-  memoryBank: string[]; // Stores snippets of conversation for persistent context
+  affinityScore: number;
+  relationshipLevel: RelationshipLevel;
+  removedApparel: string[]; 
+  currentEnvironment: string; // "Original", "Bedroom", "Beach", "Luxury Suite"
+  memoryBank: string[]; 
   chatHistory: ChatMessage[];
+  armorLevel: number;
+  isTtsEnabled?: boolean;
 }
 
 export interface CharacterData {
   details: CharacterDetails | null;
   images: CharacterImages | null;
   prompt: string;
-  dimension: '2D' | '3D' | null;
-  interactiveState?: InteractiveState; // Optional, for interactive mode
+  isNeuralLinked: boolean;
+  interactiveState?: InteractiveState;
 }
 
 export interface ChatMessage {

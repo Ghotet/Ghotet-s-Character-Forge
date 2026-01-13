@@ -7,11 +7,11 @@ interface LoaderProps {
 
 export const Loader: React.FC<LoaderProps> = ({ state }) => {
   const messages: Record<string, string> = {
-    generatingConcepts: "Contacting the muse...",
-    generatingDetails: "Forging soul and story...",
+    generatingConcepts: "Conjuring neural archetypes...",
+    generatingDetails: "Synthesizing companion essence...",
   };
   
-  const message = messages[state] || "Working...";
+  const message = messages[state] || "Processing data...";
 
   return (
     <div className="flex flex-col items-center justify-center p-8 text-center animate-pulse">
