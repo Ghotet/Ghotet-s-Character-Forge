@@ -1,3 +1,4 @@
+
 export type AppState =
   | 'idle'
   | 'generatingConcepts'
@@ -54,6 +55,7 @@ export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
   emotion?: 'neutral' | 'happy' | 'angry' | 'thoughtful';
+  choices?: string[]; // Multiple choice options for quests
 }
 
 export interface Settings {

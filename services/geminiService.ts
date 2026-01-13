@@ -20,7 +20,10 @@ const characterDetailsSchema = {
           title: { type: Type.STRING },
           description: { type: Type.STRING }
         }
-      }
+      },
+      minItems: 3,
+      maxItems: 3,
+      description: "Provide exactly 3 narrative quest arcs."
     }
   },
   required: ["name", "personality", "backstory", "voicePrompt", "quests", "baseApparel"]
@@ -65,17 +68,52 @@ export const getCharacterChatResponse = async (
   details: CharacterDetails,
   memoryBank: string[],
   relationship: RelationshipLevel,
-  affinity: number
-): Promise<{ text: string, emotion: string, affinityGain: number, creditsGain: number }> => {
-  const systemInstruction = `You are ${details.name}. Level: ${relationship}. Affinity: ${affinity}/1000.
+  affinity: number,
+  activeQuestTitle?: string
+): Promise<{ text: string, emotion: string, affinityGain: number, creditsGain: number, choices?: string[], questComplete?: boolean }> => {
+  let systemInstruction = `You are ${details.name}. Level: ${relationship}. Affinity: ${affinity}/1000.
   Roleplay as a seductive anime-style girl. Keep responses short and engaging. 
-  Personality: ${details.personality.join(', ')}.
-  Return JSON: {"text": "...", "emotion": "happy|angry|thoughtful|neutral", "affinityGain": 5-15, "creditsGain": 10-20}`;
+  Personality: ${details.personality.join(', ')}.`;
+
+  if (activeQuestTitle) {
+    systemInstruction += `\nCRITICAL: You are currently the Game Master for the quest node: "${activeQuestTitle}". 
+    The quest MUST have a finite length (total of 5-7 interactions). 
+    You MUST provide exactly 4 distinct choices (A, B, C, D) in the 'choices' field for the user to pick from. 
+    One choice should align perfectly with your personality traits (${details.personality.join(', ')}). 
+    Others should be neutral, reckless, or out-of-character.
+    Assign affinityGain based on the user's last choice alignment with your traits.
+    If the quest has reached its narrative end, set 'questComplete' to true and give a concluding seductive message.`;
+  }
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: [...history.map(m => ({ role: m.role, parts: [{ text: m.text }] })), { role: 'user', parts: [{ text: userInput }] }],
-    config: { systemInstruction, responseMimeType: "application/json" }
+    config: { 
+        systemInstruction, 
+        responseMimeType: "application/json",
+        responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+                text: { type: Type.STRING },
+                emotion: { type: Type.STRING, enum: ["happy", "angry", "thoughtful", "neutral"] },
+                affinityGain: { type: Type.NUMBER },
+                creditsGain: { type: Type.NUMBER },
+                choices: { type: Type.ARRAY, items: { type: Type.STRING } },
+                questComplete: { type: Type.BOOLEAN }
+            },
+            required: ["text", "emotion", "affinityGain", "creditsGain"]
+        }
+    }
+  });
+  return extractJson(response.text);
+};
+
+export const generateNewQuest = async (details: CharacterDetails): Promise<{ title: string; description: string }> => {
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: `Based on the character ${details.name} (Personality: ${details.personality.join(', ')}), generate ONE new narrative quest arc for her manifest.
+    Return JSON: {"title": "...", "description": "..."}`,
+    config: { responseMimeType: "application/json" }
   });
   return extractJson(response.text);
 };
@@ -132,10 +170,8 @@ export const generateModifiedImage = async (
     environment: string, 
     style?: string
 ): Promise<ImagePart> => {
-  // Enhanced bikini-first logic for removal
   const envPrompt = environment === "Original" ? "Maintain the exact original background." : `Background is now a ${environment}.`;
   
-  // Explicitly prompt for bikini top/bottoms when items are removed rather than new outfits
   let apparelPrompt = "";
   if (removedItems.length > 0) {
       apparelPrompt = `Remove the following items: ${removedItems.join(', ')}. 

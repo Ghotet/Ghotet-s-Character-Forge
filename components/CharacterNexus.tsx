@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import type { CharacterData, ChatMessage, InteractiveState, ImagePart, CharacterDetails as CharacterDetailsType, RelationshipLevel } from '../types';
-import { getCharacterChatResponse, generateCharacterSpeech, decodeAudioData, generateModifiedImage, generateRenamedProfile, generateRandomName } from '../services/geminiService';
+import { getCharacterChatResponse, generateCharacterSpeech, decodeAudioData, generateModifiedImage, generateRenamedProfile, generateRandomName, generateNewQuest } from '../services/geminiService';
 import { CharacterDetails } from './CharacterDetails';
 import JSZip from 'jszip';
 
@@ -16,6 +16,18 @@ interface CharacterNexusProps {
 
 const ENVIRONMENTS = ['Original', 'Luxury Suite', 'Private Bedroom', 'Moonlight Beach', 'Neon Rooftop'];
 const COSTUMES = ['Classic Anime', 'Seductive Bunny', 'Latex Bodysuit', 'Silk Lingerie', 'String Bikini'];
+
+const DiceIcon: React.FC = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h16v16H4z M9 9h.01 M15 9h.01 M9 15h.01 M15 15h.01 M12 12h.01" />
+    </svg>
+);
+
+const CheckIcon: React.FC = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+    </svg>
+);
 
 export const CharacterNexus: React.FC<CharacterNexusProps> = ({ 
   data, 
@@ -42,6 +54,10 @@ export const CharacterNexus: React.FC<CharacterNexusProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [newNameInput, setNewNameInput] = useState(data.details.name);
+
+  // Quest Management
+  const [activeQuestTitle, setActiveQuestTitle] = useState<string | null>(null);
+  const [questChoices, setQuestChoices] = useState<string[]>([]);
 
   const sessionStarted = useRef(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -84,17 +100,18 @@ export const CharacterNexus: React.FC<CharacterNexusProps> = ({
     const text = customMsg || input;
     if (!text.trim() || isTyping || isProcessing) return;
     
-    // Auto-switch to chat if a game was selected or interaction launched
     if (view !== 'chat') setView('chat');
     
     setInput('');
+    setQuestChoices([]); // Clear choices before receiving next set
     setMessages(prev => [...prev, { role: 'user', text }]);
     setIsTyping(true);
 
     try {
-      const response = await getCharacterChatResponse(messages, text, data.details!, [], relLevel, affinity);
-      setAffinity(prev => prev + response.affinityGain);
-      setCredits(prev => prev + response.creditsGain);
+      const response = await getCharacterChatResponse(messages, text, data.details!, [], relLevel, affinity, activeQuestTitle || undefined);
+      
+      setAffinity(prev => Math.max(0, prev + response.affinityGain));
+      setCredits(prev => Math.max(0, prev + response.creditsGain));
       
       const poses = data.images!.poses;
       const poseMap: any = { happy: poses[1], angry: poses[2], thoughtful: poses[3], neutral: poses[0] };
@@ -108,7 +125,20 @@ export const CharacterNexus: React.FC<CharacterNexusProps> = ({
           }, 8000);
       }
 
-      setMessages(prev => [...prev, { role: 'model', text: response.text, emotion: response.emotion as any }]);
+      setMessages(prev => [...prev, { 
+          role: 'model', 
+          text: response.text, 
+          emotion: response.emotion as any,
+          choices: response.choices 
+      }]);
+
+      if (response.choices) {
+          setQuestChoices(response.choices);
+      }
+
+      if (response.questComplete) {
+          handleQuestCompletion();
+      }
 
       if (isTtsEnabled) {
           audioCtxRef.current = audioCtxRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -124,8 +154,28 @@ export const CharacterNexus: React.FC<CharacterNexusProps> = ({
     } finally { setIsTyping(false); }
   };
 
+  const handleQuestCompletion = async () => {
+      const completedTitle = activeQuestTitle;
+      setActiveQuestTitle(null);
+      setQuestChoices([]);
+      
+      setIsProcessing(true);
+      try {
+          const newQuest = await generateNewQuest(data.details!);
+          const updatedQuests = data.details!.quests.filter(q => q.title !== completedTitle);
+          updatedQuests.push(newQuest);
+          
+          onUpdateCharacterDetails({ quests: updatedQuests });
+      } catch (e) {
+          console.error("Failed to cycle quest", e);
+      } finally {
+          setIsProcessing(false);
+      }
+  };
+
   const handleStartQuest = (title: string, desc: string) => {
-      handleSend(`Let's play the quest: "${title}". Description: ${desc}. Please act as the Game Master and start the scenario for me. Give me choices!`);
+      setActiveQuestTitle(title);
+      handleSend(`Let's start the quest: "${title}". ${desc}. I'm ready for the first situation and choices.`);
   };
 
   const handleModify = async (newRemoved?: string[], newEnv?: string, costume?: string) => {
@@ -292,17 +342,19 @@ export const CharacterNexus: React.FC<CharacterNexusProps> = ({
                 <div className="mb-4 flex justify-between items-start">
                     <div className="flex-grow">
                         {isRenaming ? (
-                            <div className="flex gap-2">
+                            <div className="flex items-center gap-2">
                                 <input 
                                     autoFocus
                                     className="bg-black border-b border-green-500/50 text-2xl font-bold text-white uppercase outline-none font-orbitron w-full" 
                                     value={newNameInput} 
                                     onChange={e => setNewNameInput(e.target.value)}
-                                    onBlur={handleRenameSubmit}
                                     onKeyPress={e => e.key === 'Enter' && handleRenameSubmit()}
                                 />
-                                <button onClick={handleRandomRename} className="text-gray-500 hover:text-green-400">
-                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h5M20 20v-5h-5M4 4l1.5 1.5A9 9 0 0120.5 11M20 20l-1.5-1.5A9 9 0 003.5 13" /></svg>
+                                <button onClick={handleRandomRename} className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 text-gray-300 transition-colors" title="Reroll Name">
+                                    <DiceIcon />
+                                </button>
+                                <button onClick={handleRenameSubmit} className="p-2 bg-green-500/20 rounded-lg hover:bg-green-500/40 text-green-400 transition-colors" title="Confirm Name">
+                                    <CheckIcon />
                                 </button>
                             </div>
                         ) : (
@@ -313,7 +365,9 @@ export const CharacterNexus: React.FC<CharacterNexusProps> = ({
                                 </button>
                             </div>
                         )}
-                        <p className="text-[9px] text-green-600 uppercase font-mono tracking-widest mt-1">Active Link // Seductive Mode</p>
+                        <p className="text-[9px] text-green-600 uppercase font-mono tracking-widest mt-1">
+                            {activeQuestTitle ? `Active Quest: ${activeQuestTitle}` : 'Active Link // Seductive Mode'}
+                        </p>
                     </div>
                 </div>
                 <div className="flex-grow overflow-y-auto space-y-4 mb-4 pr-2 scrollbar-hide">
@@ -329,12 +383,26 @@ export const CharacterNexus: React.FC<CharacterNexusProps> = ({
                 </div>
                 
                 <div className="space-y-4 pt-4 border-t border-gray-800/50">
-                    <div className="flex gap-2">
-                        <input value={input} onChange={e => setInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleSend()} placeholder="Sync thought stream..." className="flex-grow bg-black/50 border border-gray-800 rounded-xl px-4 py-3 text-sm focus:border-green-500/40 outline-none transition-all" />
-                        <button onClick={() => handleSend()} className="bg-green-500/10 border border-green-500/30 text-green-400 px-5 rounded-xl hover:bg-green-500/30 transition-all">
-                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
-                        </button>
-                    </div>
+                    {questChoices.length > 0 ? (
+                        <div className="grid grid-cols-1 gap-2 mb-2">
+                            {questChoices.map((choice, i) => (
+                                <button 
+                                    key={i} 
+                                    onClick={() => handleSend(choice)} 
+                                    className="text-left px-4 py-3 text-xs font-bold text-gray-300 bg-gray-800/50 border border-gray-700 rounded-xl hover:border-green-500 hover:text-green-400 transition-all"
+                                >
+                                    {choice}
+                                </button>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex gap-2">
+                            <input value={input} onChange={e => setInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleSend()} placeholder="Sync thought stream..." className="flex-grow bg-black/50 border border-gray-800 rounded-xl px-4 py-3 text-sm focus:border-green-500/40 outline-none transition-all" />
+                            <button onClick={() => handleSend()} className="bg-green-500/10 border border-green-500/30 text-green-400 px-5 rounded-xl hover:bg-green-500/30 transition-all">
+                                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         )}
