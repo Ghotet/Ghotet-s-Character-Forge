@@ -35,6 +35,17 @@ const App: React.FC = () => {
       memoryBank: [],
       chatHistory: [],
       armorLevel: 0,
+      hunger: 50,
+      energy: 50,
+      mood: 50,
+      // Added missing rewards field
+      rewards: [],
+      // Fix: Add missing required properties 'inventory' and 'behaviorStats'
+      inventory: [],
+      behaviorStats: { kindness: 50, assertiveness: 50, intimacy: 10 },
+      // Fix: Add missing properties 'wardrobe' and 'modifications'
+      wardrobe: [],
+      modifications: [],
     },
   });
   const [conceptImages, setConceptImages] = useState<ImagePart[]>([]);
@@ -94,6 +105,17 @@ const App: React.FC = () => {
           memoryBank: [],
           chatHistory: [],
           armorLevel: 0,
+          hunger: 50,
+          energy: 50,
+          mood: 50,
+          // Added missing rewards field
+          rewards: [],
+          // Fix: Add missing required properties 'inventory' and 'behaviorStats'
+          inventory: [],
+          behaviorStats: { kindness: 50, assertiveness: 50, intimacy: 10 },
+          // Fix: Add missing properties 'wardrobe' and 'modifications'
+          wardrobe: [],
+          modifications: [],
         },
       }));
       setAppState('displayingCharacter');
@@ -136,11 +158,21 @@ const App: React.FC = () => {
             memoryBank: [],
             chatHistory: [],
             armorLevel: 0,
+            hunger: 50,
+            energy: 50,
+            mood: 50,
+            // Added missing rewards field
+            rewards: [],
+            // Fix: Add missing required properties 'inventory' and 'behaviorStats'
+            inventory: [],
+            behaviorStats: { kindness: 50, assertiveness: 50, intimacy: 10 },
+            // Fix: Add missing properties 'wardrobe' and 'modifications'
+            wardrobe: [],
+            modifications: [],
           };
         }
       } else {
         const uploadedImagePart = await fileToBase64(file);
-        // Style reimagining happens here during the initial full-body scan
         const fullBodyImage = await generateFullBodyImage(uploadedImagePart, settings, style);
         const details = await generateCharacterDetailsFromImage(fullBodyImage, settings);
         const poses = await generateEmotionalPoses(fullBodyImage, settings);
@@ -160,6 +192,17 @@ const App: React.FC = () => {
             memoryBank: [],
             chatHistory: [],
             armorLevel: 0,
+            hunger: 50,
+            energy: 50,
+            mood: 50,
+            // Added missing rewards field
+            rewards: [],
+            // Fix: Add missing required properties 'inventory' and 'behaviorStats'
+            inventory: [],
+            behaviorStats: { kindness: 50, assertiveness: 50, intimacy: 10 },
+            // Fix: Add missing properties 'wardrobe' and 'modifications'
+            wardrobe: [],
+            modifications: [],
           },
         };
       }
